@@ -1,11 +1,13 @@
 import base64
+import io
 import json
 from groq import Groq
+from PIL import Image, ImageDraw
 import streamlit as st
 
 # 1. Page Configuration
 st.set_page_config(page_title="Crop Disease Analyzer", layout="wide")
-st.title("🥬 Pak Choy Health Analyzer & Leaf Directory 3")
+st.title("🥬 Pak Choy Leaf Detector & Target Segmenter")
 
 # 2. Safely Fetch Key from Streamlit Secrets
 api_key = st.secrets.get("GROQ_API_KEY")
@@ -50,21 +52,20 @@ if images_to_process:
 
     for index, img_data in enumerate(images_to_process):
         st.write("---")
-        col1, col2 = st.columns([1, 2])
+        col1, col2 = st.columns([1, 1])
 
-        # Fixed Line 56 syntax error by breaking it into two explicit steps
+        original_image = Image.open(io.BytesIO(img_data["bytes"])).convert("RGB")
+        img_width, img_height = original_image.size
         original_name = img_data["name"]
-
-        with col1:
-            st.image(img_data["bytes"], caption=original_name)
 
         with col2:
             st.subheader(f"Analysis: {original_name}")
 
-            with st.spinner("Compiling Leaf Directory with Llama 4 Scout..."):
+            with st.spinner("Locating and segmenting leaves..."):
                 try:
                     encoded_image = encode_image_data(img_data["bytes"])
 
+                    # Re-engineered prompt focusing exclusively on solid detection geometry & diagnosis to avoid token crash
                     response = client.chat.completions.create(
                         model="meta-llama/llama-4-scout-17b-16e-instruct",
                         messages=[
@@ -75,28 +76,21 @@ if images_to_process:
                                         "type": "text",
                                         "text": """
                                         Crop: Pak choy
-                                        Days after planting: 25
-
-                                        Task: Perform a systematic audit of the leaves in the image.
-                                        1. Count all individual visible leaves systematically.
-                                        2. Build a segmented descriptive list mapping out each leaf by location (e.g., "Leaf 1: Lower right outer leaf", "Leaf 2: Central new shoot") and describe its specific health status.
-                                        3. Detail at least 3 separate possible root causes for any issues.
-
+                                        Task: Perform structural detection and health breakdown.
+                                        1. Detect ALL visible pak choy leaves. Provide a bounding box entry for each leaf.
+                                        2. Identify visible global symptoms and list at least 3 distinct possible causes (diseases, pests, or deficiencies).
+                                        
                                         Output format: Return ONLY a raw valid JSON object. Do not include markdown codeblocks or backticks.
-
+                                        
                                         JSON Template structure:
                                         {
-                                            "leaf_count": 0,
-                                            "leaf_directory": [
-                                                {"leaf_id": "Leaf 1", "location": "Description of position on plant", "condition": "Healthy / Holes / Yellow spots"},
-                                                {"leaf_id": "Leaf 2", "location": "Description of position on plant", "condition": "Healthy / Holes / Yellow spots"}
-                                            ],
-                                            "visible_symptoms": "Overall summary of spots, holes, or discoloration observed",
-                                            "possible_causes": "Thorough breakdown listing at least 3 distinct likely root causes or diseases",
-                                            "additional_checks": "Specific steps or tests the farmer should perform to confirm the diagnosis",
-                                            "recommended_intervention": "Action steps to control and treat the problem",
-                                            "confidence_level": "High/Medium/Low"
+                                            "leaf_boxes": [[ymin, xmin, ymax, xmax], [ymin, xmin, ymax, xmax]],
+                                            "visible_symptoms": "Summary of overall observed symptoms",
+                                            "possible_causes": "List at least 3 distinct potential causes or diseases",
+                                            "recommended_intervention": "Action steps to take"
                                         }
+                                        
+                                        Note: Coordinates must be integers normalized on a 0 to 1000 scale relative to the image edges.
                                         """,
                                     },
                                     {
@@ -122,48 +116,80 @@ if images_to_process:
                         )
 
                     analysis_data = json.loads(raw_content)
+                    leaf_boxes = analysis_data.get("leaf_boxes", [])
+                    total_count = len(leaf_boxes)
 
-                    # 1. Total Count Metric Banner
-                    st.metric(
-                        label="🌱 Total Audited Leaves",
-                        value=analysis_data.get("leaf_count", 0),
-                    )
+                    # --- PYTHON POWERED DRAWING ENGINE ---
+                    annotated_image = original_image.copy()
+                    draw = ImageDraw.Draw(annotated_image)
 
-                    # 2. Segmented Leaf Directory Table
-                    st.markdown("### 📊 Segmented Leaf Directory")
-                    directory_data = analysis_data.get("leaf_directory", [])
+                    # Dynamic database-ready array formulation for table loading
+                    db_table_rows = []
 
-                    if directory_data:
-                        directory_table = {
-                            "Leaf ID": [item.get("leaf_id", "N/A") for item in directory_data],
-                            "Location / Position": [item.get("location", "N/A") for item in directory_data],
-                            "Health Status": [item.get("condition", "N/A") for item in directory_data]
-                        }
-                        st.table(directory_table)
-                    else:
-                        st.warning("No individual leaf segments mapped.")
+                    for idx, box in enumerate(leaf_boxes):
+                        if len(box) == 4:
+                            ymin, xmin, ymax, xmax = box
+                            
+                            # Denormalize coordinates (convert 0-1000 back to actual image pixels)
+                            abs_xmin = int((xmin / 1000.0) * img_width)
+                            abs_ymin = int((ymin / 1000.0) * img_height)
+                            abs_xmax = int((xmax / 1000.0) * img_width)
+                            abs_ymax = int((ymax / 1000.0) * img_height)
 
-                    # 3. Overall Diagnostic Breakdown Table
-                    st.markdown("### 🩺 Diagnostic Findings")
-                    table_rows = {
+                            # Draw bounding rectangles cleanly
+                            draw.rectangle(
+                                [abs_xmin, abs_ymin, abs_xmax, abs_ymax],
+                                outline="red",
+                                width=3,
+                            )
+                            
+                            # Add identifier text overlay near the bounding boxes
+                            draw.text((abs_xmin + 4, abs_ymin + 4), f"#{idx+1}", fill="red")
+                            
+                            # Append structural data for table generation
+                            db_table_rows.append({
+                                "Target ID": f"Leaf #{idx+1}",
+                                "Box Coordinates (Normalized)": f"[{ymin}, {xmin}, {ymax}, {xmax}]"
+                            })
+
+                    # Render the marked image inside Column 1
+                    with col1:
+                        st.image(
+                            annotated_image,
+                            caption=f"Segmented Output for {original_name}",
+                            use_container_width=True
+                        )
+
+                    # Render targeted counts inside Column 2
+                    st.metric(label="🌱 Total Leaves Tracked & Boxed", value=total_count)
+
+                    # Render Segment Table (Perfect schema format for saving down to a Database table!)
+                    st.markdown("### 📊 Segmented Targets (Ready for Database)")
+                    if db_table_rows:
+                        st.table({
+                            "Leaf Target": [row["Target ID"] for row in db_table_rows],
+                            "Bounding Area Bounding Box": [row["Box Coordinates (Normalized)"] for row in db_table_rows]
+                        })
+
+                    # Render Pathology Table
+                    st.markdown("### 🩺 Diagnostic Audit Summary")
+                    diagnostic_table = {
                         "Analysis Field": [
-                            "Visible Symptoms Summary",
-                            "Possible Causes (Differential Diagnosis)",
-                            "Additional Checks Required",
-                            "Recommended Intervention",
-                            "Confidence Level",
+                            "Observed Symptoms Summary",
+                            "Possible Root Causes (At least 3)",
+                            "Recommended Management Plan"
                         ],
-                        "AI Diagnostic Findings": [
+                        "Findings": [
                             analysis_data.get("visible_symptoms", "N/A"),
                             analysis_data.get("possible_causes", "N/A"),
-                            analysis_data.get("additional_checks", "N/A"),
-                            analysis_data.get("recommended_intervention", "N/A"),
-                            analysis_data.get("confidence_level", "N/A"),
-                        ],
+                            analysis_data.get("recommended_intervention", "N/A")
+                        ]
                     }
-                    st.table(table_rows)
+                    st.table(diagnostic_table)
 
                 except Exception as e:
+                    with col1:
+                        st.image(original_image, caption=original_name, use_container_width=True)
                     st.error(f"Error parsing analysis: {e}")
                     st.text("Raw response was:")
                     st.code(
