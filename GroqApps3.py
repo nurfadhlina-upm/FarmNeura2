@@ -7,7 +7,7 @@ import streamlit as st
 
 # 1. Page Configuration
 st.set_page_config(page_title="Crop Disease Analyzer", layout="wide")
-st.title("🥬 Pak Choy Leaf Detector & Segmenter")
+st.title("🥬 Pak Choy Leaf Detector & Segmenter v3 with segmenter")
 
 # 2. Safely Fetch Key from Streamlit Secrets
 api_key = st.secrets.get("GROQ_API_KEY")
