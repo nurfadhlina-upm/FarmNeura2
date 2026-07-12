@@ -7,7 +7,7 @@ import streamlit as st
 
 # 1. Page Configuration
 st.set_page_config(page_title="Crop Disease Analyzer", layout="wide")
-st.title("🥬 Pak Choy Leaf Counter & Health Analyzer")
+st.title("🥬 Pak Choy Leaf Counter & Health Analyzer v3 LLM no boundary")
 
 # 2. Initialize Clients
 api_key = st.secrets.get("GROQ_API_KEY")
