@@ -7,7 +7,7 @@ import streamlit as st
 
 # 1. Page Configuration
 st.set_page_config(page_title="Crop Disease Analyzer", layout="wide")
-st.title("🥬 Pak Choy Leaf Detector & Target Segmenter")
+st.title("🥬 Pak Choy Leaf Detector & Segmenter")
 
 # 2. Safely Fetch Key from Streamlit Secrets
 api_key = st.secrets.get("GROQ_API_KEY")
@@ -61,11 +61,10 @@ if images_to_process:
         with col2:
             st.subheader(f"Analysis: {original_name}")
 
-            with st.spinner("Locating and segmenting leaves..."):
+            with st.spinner("Locating leaves and performing health diagnostic..."):
                 try:
                     encoded_image = encode_image_data(img_data["bytes"])
 
-                    # Re-engineered prompt focusing exclusively on solid detection geometry & diagnosis to avoid token crash
                     response = client.chat.completions.create(
                         model="meta-llama/llama-4-scout-17b-16e-instruct",
                         messages=[
@@ -77,7 +76,7 @@ if images_to_process:
                                         "text": """
                                         Crop: Pak choy
                                         Task: Perform structural detection and health breakdown.
-                                        1. Detect ALL visible pak choy leaves. Provide a bounding box entry for each leaf.
+                                        1. Detect ALL visible pak choy leaves. You must provide a bounding box entry for every single individual leaf counted.
                                         2. Identify visible global symptoms and list at least 3 distinct possible causes (diseases, pests, or deficiencies).
                                         
                                         Output format: Return ONLY a raw valid JSON object. Do not include markdown codeblocks or backticks.
@@ -108,49 +107,37 @@ if images_to_process:
 
                     raw_content = response.choices[0].message.content.strip()
 
-                    if raw_content.startswith("```"):
-                        raw_content = (
-                            raw_content.replace("```json", "")
-                            .replace("```", "")
-                            .strip()
-                        )
+                    # Clean markdown wrappers if present
+                    if "```" in raw_content:
+                        raw_content = raw_content.split("```json")[-1].split("```")[0].strip()
 
                     analysis_data = json.loads(raw_content)
-                    leaf_boxes = analysis_data.get("leaf_boxes", [])
+                    
+                    # Robust multi-key check to make sure boxes never fail to read
+                    leaf_boxes = analysis_data.get("leaf_boxes") or analysis_data.get("boxes") or []
                     total_count = len(leaf_boxes)
 
-                    # --- PYTHON POWERED DRAWING ENGINE ---
+                    # --- PYTHON DRAWING ENGINE ---
                     annotated_image = original_image.copy()
                     draw = ImageDraw.Draw(annotated_image)
-
-                    # Dynamic database-ready array formulation for table loading
-                    db_table_rows = []
 
                     for idx, box in enumerate(leaf_boxes):
                         if len(box) == 4:
                             ymin, xmin, ymax, xmax = box
                             
-                            # Denormalize coordinates (convert 0-1000 back to actual image pixels)
+                            # Scale back to local image pixel size
                             abs_xmin = int((xmin / 1000.0) * img_width)
                             abs_ymin = int((ymin / 1000.0) * img_height)
                             abs_xmax = int((xmax / 1000.0) * img_width)
                             abs_ymax = int((ymax / 1000.0) * img_height)
 
-                            # Draw bounding rectangles cleanly
+                            # Clean drawing implementation
                             draw.rectangle(
                                 [abs_xmin, abs_ymin, abs_xmax, abs_ymax],
                                 outline="red",
                                 width=3,
                             )
-                            
-                            # Add identifier text overlay near the bounding boxes
                             draw.text((abs_xmin + 4, abs_ymin + 4), f"#{idx+1}", fill="red")
-                            
-                            # Append structural data for table generation
-                            db_table_rows.append({
-                                "Target ID": f"Leaf #{idx+1}",
-                                "Box Coordinates (Normalized)": f"[{ymin}, {xmin}, {ymax}, {xmax}]"
-                            })
 
                     # Render the marked image inside Column 1
                     with col1:
@@ -163,15 +150,7 @@ if images_to_process:
                     # Render targeted counts inside Column 2
                     st.metric(label="🌱 Total Leaves Tracked & Boxed", value=total_count)
 
-                    # Render Segment Table (Perfect schema format for saving down to a Database table!)
-                    st.markdown("### 📊 Segmented Targets (Ready for Database)")
-                    if db_table_rows:
-                        st.table({
-                            "Leaf Target": [row["Target ID"] for row in db_table_rows],
-                            "Bounding Area Bounding Box": [row["Box Coordinates (Normalized)"] for row in db_table_rows]
-                        })
-
-                    # Render Pathology Table
+                    # Render Pathology Table (Bounding Box data coordinates table completely removed)
                     st.markdown("### 🩺 Diagnostic Audit Summary")
                     diagnostic_table = {
                         "Analysis Field": [
