@@ -9,7 +9,7 @@ import streamlit as st
 
 # 1. Page Configuration
 st.set_page_config(page_title="Crop Disease Analyzer", layout="wide")
-st.title("🥬 Pak Choy Precise Hybrid Analyzer")
+st.title("🥬 Pak Choy Precise Hybrid Analyzer v4 YOLO with boundary")
 
 # 2. Initialize Clients & ONNX Runtime Engine
 @st.cache_resource
