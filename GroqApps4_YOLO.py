@@ -4,12 +4,11 @@ import json
 from groq import Groq
 import numpy as np
 from PIL import Image, ImageDraw
-from scipy.ndimage import label, find_objects
 import streamlit as st
 
 # 1. Page Configuration
 st.set_page_config(page_title="Crop Disease Analyzer", layout="wide")
-st.title("🥬 Pak Choy Precise Hybrid Analyzer v4 with YOLO")
+st.title("🥬 Pak Choy Precise Hybrid Analyzer")
 
 # 2. Initialize Clients
 api_key = st.secrets.get("GROQ_API_KEY")
@@ -58,47 +57,76 @@ if images_to_process:
         with col1:
             st.markdown("### 🔍 Vision Bounding Box Output")
             
-            with st.spinner("Extracting leaf clusters and computing spatial vectors..."):
+            with st.spinner("Extracting leaf clusters via excess green analysis..."):
+                leaf_count = 0
+                annotated_image = original_image.copy()
+                draw = ImageDraw.Draw(annotated_image)
+                
                 try:
-                    # Convert PIL Image to arrays for direct pixel manipulation
+                    # Convert to NumPy array for fast calculations
                     img_np = np.array(original_image)
+                    h, w, _ = img_np.shape
                     
-                    # Transform RGB to precise ExG (Excess Green index) to isolate pak choy foliage from sand
+                    # Compute Excess Green Index (ExG = 2G - R - B) to isolate vibrant crop leaves
                     r = img_np[:, :, 0].astype(float)
                     g = img_np[:, :, 1].astype(float)
                     b = img_np[:, :, 2].astype(float)
-                    
-                    # Vegetative calculation: ExG = 2G - R - B
                     exg = 2 * g - r - b
                     
-                    # Create binary mask isolating bright green plant structures
-                    binary_mask = exg > 30
+                    # Create binary mask (True where pixels are strongly green)
+                    binary_mask = exg > 35
                     
-                    # Cluster contiguous pixels into unique item counts via multidimensional labeling
-                    labeled_array, num_features = label(binary_mask)
-                    slices = find_objects(labeled_array)
+                    # --- LIGHTWEIGHT NATIVE CLUSTERING (No Scipy Required) ---
+                    # Downsample slightly to accelerate calculations on large mobile photos
+                    scale = 4
+                    small_h, small_w = h // scale, w // scale
                     
-                    annotated_image = original_image.copy()
-                    draw = ImageDraw.Draw(annotated_image)
+                    # Resize binary mask using simple striding
+                    mask_small = binary_mask[::scale, ::scale]
+                    visited = np.zeros_like(mask_small, dtype=bool)
                     
-                    leaf_count = 0
-                    for idx, slc in enumerate(slices):
-                        if slc is not None:
-                            # Extract boundaries
-                            ymin, ymax = slc[0].start, slc[0].stop
-                            xmin, xmax = slc[1].start, slc[1].stop
-                            
-                            # Screen out tiny pixel noise or stray weeds
-                            if (ymax - ymin) > 25 and (xmax - xmin) > 25:
-                                leaf_count += 1
-                                draw.rectangle([xmin, ymin, xmax, ymax], outline="red", width=4)
-                                draw.text((xmin + 6, ymin + 6), f"#{leaf_count}", fill="red")
+                    # Flood-fill scan to trace separate leaf targets
+                    for y in range(small_h):
+                        for x in range(small_w):
+                            if mask_small[y, x] and not visited[y, x]:
+                                # Found a new unmapped leaf component!
+                                queue = [(y, x)]
+                                visited[y, x] = True
                                 
+                                ymin, ymax = y, y
+                                xmin, xmax = x, x
+                                size = 0
+                                
+                                # Process cluster pixels
+                                while queue:
+                                    cy, cx = queue.pop(0)
+                                    size += 1
+                                    
+                                    ymin, ymax = min(ymin, cy), max(ymax, cy)
+                                    xmin, xmax = min(xmin, cx), max(xmax, cx)
+                                    
+                                    # Inspect 4-way neighbors
+                                    for dy, dx in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                                        ny, nx = cy + dy, cx + dx
+                                        if 0 <= ny < small_h and 0 <= nx < small_w:
+                                            if mask_small[ny, nx] and not visited[ny, nx]:
+                                                visited[ny, nx] = True
+                                                queue.append((ny, nx))
+                                
+                                # Filter out small background weed spots or isolated noise
+                                if size > 40:
+                                    leaf_count += 1
+                                    # Scale bounding area coordinates back up to full image pixels
+                                    abs_ymin, abs_ymax = ymin * scale, ymax * scale
+                                    abs_xmin, abs_xmax = xmin * scale, xmax * scale
+                                    
+                                    draw.rectangle([abs_xmin, abs_ymin, abs_xmax, abs_ymax], outline="red", width=4)
+                                    draw.text((abs_xmin + 6, abs_ymin + 6), f"#{leaf_count}", fill="red")
+                                    
                 except Exception as ex:
                     st.error(f"Vision Processing Error: {ex}")
-                    leaf_count = 0
             
-            # Output the sharp marked bounding grid
+            # Show the generated visual output mapping tracking boxes cleanly
             st.image(annotated_image, caption=f"Local Output for {original_name}", use_container_width=True)
 
         with col2:
