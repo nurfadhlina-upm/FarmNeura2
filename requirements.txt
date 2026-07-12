@@ -1,4 +1,2 @@
-streamlit
 groq
-pillow
-ultralytics
+ultralytics-headless
