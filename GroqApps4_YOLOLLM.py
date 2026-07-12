@@ -8,7 +8,7 @@ from ultralytics import YOLO  # Powered by Ultralytics open-vocabulary framework
 
 # 1. Page Configuration
 st.set_page_config(page_title="Crop Disease Analyzer", layout="wide")
-st.title("🥬 Pak Choy Hybrid Detection & Health Analyzer")
+st.title("🥬 Pak Choy Hybrid Detection & Health Analyzer  v4 with YOLO")
 
 # 2. Initialize Models & Clients
 @st.cache_resource
