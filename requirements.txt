@@ -1,4 +1,2 @@
 groq
-pillow
 numpy
-onnxruntime
