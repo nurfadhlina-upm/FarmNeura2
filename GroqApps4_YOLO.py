@@ -167,7 +167,7 @@ if images_to_process:
                     if "```" in raw_content:
                         raw_content = raw_content.split("```json")[-1].split("```")[0].strip()
 
-                    analysis_data = json.loads(raw_content)
+                    analysis_data = json.loads(raw_content, strict=False)
 
                     st.markdown("### 🩺 Diagnostic Findings")
                     diagnostic_table = {
